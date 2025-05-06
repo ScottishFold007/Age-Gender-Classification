@@ -1,7 +1,3 @@
-'''
-python model_converter.py --mode convert --model_path age_gender_models/age_classification_acc_81.h5 --cls_task age
-'''
-
 import os
 import numpy as np
 import torch
@@ -66,7 +62,11 @@ class TensorFlowToPyTorchConverter:
         
         # 打印TensorFlow模型的层
         for i, layer in enumerate(self.tf_model.layers):
-            print(f"TF层 {i}: {layer.name}, 输出形状: {layer.output_shape}")
+            try:
+                output_shape = layer.output_shape
+                print(f"TF层 {i}: {layer.name}, 输出形状: {output_shape}")
+            except AttributeError:
+                print(f"TF层 {i}: {layer.name}, 输出形状: 无法获取")
         
         # 打印PyTorch模型的参数
         for name, param in self.pytorch_model.named_parameters():
