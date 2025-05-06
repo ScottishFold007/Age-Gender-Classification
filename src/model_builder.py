@@ -1,70 +1,142 @@
-from keras import layers, regularizers
-from tensorflow import keras
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-class ModelBuilder:
-    def __init__(self, inp_shape, num_classes, reg_value):
-        self.inp_shape = inp_shape
-        self.num_classes = num_classes
-        self.setRegularizer(reg_value)
-    
-    def setRegularizer(self, reg_value):
-        if reg_value != None:
-            self.reg = regularizers.l2(l2=reg_value)
+class FeatureLearningBlock(nn.Module):
+    def __init__(self, in_channels, reg_value=None):
+        super(FeatureLearningBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 120, kernel_size=9, stride=2, padding='same')
+        self.bn1 = nn.BatchNorm2d(120)
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(120, 256, kernel_size=5, stride=1, padding='same')
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv3 = nn.Conv2d(256, 384, kernel_size=3, padding='same')
+        self.bn3 = nn.BatchNorm2d(384)
+        
+        # 添加权重正则化
+        if reg_value is not None:
+            self.weight_decay = reg_value
         else:
-            self.reg = None
+            self.weight_decay = 0
     
-    def FLB(self, inp):
-        # Feature learning block (FLB)
-        x=layers.Conv2D(filters = 120, kernel_size = (9, 9), strides=(2, 2), activation='relu', kernel_regularizer=self.reg, padding='same')(inp)
-        x=layers.BatchNormalization()(x)
-        x=layers.MaxPooling2D(pool_size=(2, 2),strides=(2, 2))(x)
-        x=layers.Conv2D(filters = 256, kernel_size = (5, 5), strides=(1, 1), activation='relu', kernel_regularizer=self.reg, padding='same')(x)
-        x=layers.MaxPooling2D(pool_size=(2, 2))(x)
-        x=layers.Conv2D(filters = 384, kernel_size = (3, 3), activation='relu', kernel_regularizer=self.reg, padding='same')(x)
-        x=layers.BatchNormalization()(x)
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = self.bn1(x)
+        x = self.pool1(x)
+        x = F.relu(self.conv2(x))
+        x = self.pool2(x)
+        x = F.relu(self.conv3(x))
+        x = self.bn3(x)
         return x
 
-    def time_attention(self, inp):
-        x=layers.Conv2D(filters = 64, kernel_size = (1, 9), activation='relu', kernel_regularizer=self.reg, padding='same')(inp)
-        x=layers.Conv2D(filters = 64, kernel_size = (1, 3), activation='relu', kernel_regularizer=self.reg, padding='same')(x)
-        x=layers.Conv2D(filters = 64, kernel_size = (1, 3), activation='relu', kernel_regularizer=self.reg, padding='same')(x)
-        x=layers.BatchNormalization()(x)
+class TimeAttention(nn.Module):
+    def __init__(self, in_channels, reg_value=None):
+        super(TimeAttention, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=(1, 9), padding='same')
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=(1, 3), padding='same')
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=(1, 3), padding='same')
+        self.bn = nn.BatchNorm2d(64)
+        
+        # 添加权重正则化
+        if reg_value is not None:
+            self.weight_decay = reg_value
+        else:
+            self.weight_decay = 0
+    
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = self.bn(x)
         return x
 
-    def frequency_attention(self, inp):
-        x=layers.Conv2D(filters = 64, kernel_size = (9, 1), activation='relu', kernel_regularizer=self.reg, padding='same')(inp)
-        x=layers.Conv2D(filters = 64, kernel_size = (3, 1), activation='relu', kernel_regularizer=self.reg, padding='same')(x)
-        x=layers.Conv2D(filters = 64, kernel_size = (3, 1), activation='relu', kernel_regularizer=self.reg, padding='same')(x)
-        x=layers.BatchNormalization()(x)
+class FrequencyAttention(nn.Module):
+    def __init__(self, in_channels, reg_value=None):
+        super(FrequencyAttention, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=(9, 1), padding='same')
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=(3, 1), padding='same')
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=(3, 1), padding='same')
+        self.bn = nn.BatchNorm2d(64)
+        
+        # 添加权重正则化
+        if reg_value is not None:
+            self.weight_decay = reg_value
+        else:
+            self.weight_decay = 0
+    
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = self.bn(x)
         return x
 
-    def MAM(self, inp):
-        # Time attention module
-        ta = self.time_attention(inp)
-        # Frequency attention module
-        fa = self.frequency_attention(inp)
-        # Concatenate time and frequency attention module outputs to build MAM
-        mam=layers.concatenate([ta, fa])
-        mam=layers.BatchNormalization()(mam)
+class MultiAttentionModule(nn.Module):
+    def __init__(self, in_channels, reg_value=None):
+        super(MultiAttentionModule, self).__init__()
+        self.time_attention = TimeAttention(in_channels, reg_value)
+        self.freq_attention = FrequencyAttention(in_channels, reg_value)
+        self.bn = nn.BatchNorm2d(128)  # 64 + 64 = 128
+    
+    def forward(self, x):
+        ta = self.time_attention(x)
+        fa = self.freq_attention(x)
+        mam = torch.cat([ta, fa], dim=1)
+        mam = self.bn(mam)
         return mam
 
-    def build_model(self, show_summary=True):
-        inp = keras.Input(shape=self.inp_shape)
-        # First feature learning block (FLB-1)
-        x = self.FLB(inp)
-        # Multi-attention module (MAM)
-        mam = self.MAM(x)
-        # Concatenate FLB-1 and MAM outputs
-        x = layers.concatenate([x, mam])
-        # Second feature learning block (FLB-2)
-        x = self.FLB(x)
-        x = layers.Flatten()(x)
-        x = layers.Dense(80, activation='relu', kernel_regularizer=self.reg)(x)
-        x = layers.BatchNormalization()(x)
-        out = layers.Dense(units=self.num_classes, activation='softmax')(x)
-        model = keras.Model(inp, out)
-        if show_summary:
-            print(model.summary(line_length=120))
-        return model
+class VoiceClassifier(nn.Module):
+    def __init__(self, input_shape=(3, 64, 64), num_classes=12, reg_value=None):
+        super(VoiceClassifier, self).__init__()
+        self.input_shape = input_shape
+        self.num_classes = num_classes
+        self.reg_value = reg_value
+        
+        # 第一个特征学习块
+        self.flb1 = FeatureLearningBlock(input_shape[0], reg_value)
+        
+        # 多注意力模块
+        self.mam = MultiAttentionModule(384, reg_value)
+        
+        # 第二个特征学习块 (输入通道数为384+128=512)
+        self.flb2 = FeatureLearningBlock(512, reg_value)
+        
+        # 全连接层
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(384, 80)  # 输入大小取决于FLB2的输出
+        self.bn = nn.BatchNorm1d(80)
+        self.fc2 = nn.Linear(80, num_classes)
+        
+    def forward(self, x):
+        # 第一个特征学习块
+        x1 = self.flb1(x)
+        
+        # 多注意力模块
+        mam_out = self.mam(x1)
+        
+        # 连接FLB1和MAM的输出
+        x = torch.cat([x1, mam_out], dim=1)
+        
+        # 第二个特征学习块
+        x = self.flb2(x)
+        
+        # 全连接层
+        x = self.flatten(x)
+        x = F.relu(self.fc1(x))
+        x = self.bn(x)
+        x = self.fc2(x)
+        
+        return F.softmax(x, dim=1)
+    
+    def summary(self):
+        """打印模型结构摘要"""
+        print(f"模型输入形状: {self.input_shape}")
+        print(f"分类类别数: {self.num_classes}")
+        print(f"权重正则化系数: {self.reg_value}")
+        print(f"模型结构:\n{self}")
+        
+        # 计算参数数量
+        total_params = sum(p.numel() for p in self.parameters())
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(f"总参数数量: {total_params:,}")
+        print(f"可训练参数数量: {trainable_params:,}")
