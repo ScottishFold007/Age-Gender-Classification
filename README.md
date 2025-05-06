@@ -1,17 +1,174 @@
 ## Age-Gender-Classification
 
-Official implementation of the paper titled **"Age and Gender Recognition Using a Convolutional Neural Network with a Specially Designed Multi-Attention Module through Speech Spectrograms"**. This implementation is for the Common Voice dataset. But it can be adjusted to any custom datasets. Paper can be downloaded from [here](https://www.mdpi.com/1424-8220/21/17/5892)
 
-Introduction
-----------------------------
-Speech signals are being used as a primary input source in human–computer interaction (HCI) to develop several applications, such as automatic speech recognition (ASR), speech emotion
-recognition (SER), gender, and age recognition. Classifying speakers according to their age and gender is a challenging task in speech processing owing to the disability of the current methods of extracting salient high-level speech features and classification models. To address these problems, we introduce a novel end-to-end age and gender recognition convolutional neural network (CNN) with a specially designed multi-attention module (MAM) from speech signals. Our proposed model uses MAM to extract spatial and temporal salient features from the input data effectively. The MAM mechanism uses a rectangular shape filter as a kernel in convolution layers and comprises two separate time and frequency attention mechanisms. The time attention branch learns to detect temporal cues, whereas the frequency attention module extracts the most relevant features to the target by focusing on the spatial frequency features. The combination of the two extracted spatial and temporal features complements one another and provide high performance in terms of age and gender classification. The proposed age and gender classification system was tested using the Common Voice and locally developed Korean speech recognition datasets. Our suggested model achieved 96%, 73%, and 76% accuracy scores for gender, age, and age-gender classification, respectively, using the Common Voice dataset. The Korean speech recognition dataset results were 97%, 97%, and 90% for gender, age, and age-gender recognition, respectively. The prediction performance of our proposed model, which was obtained in the experiments, demonstrated the superiority and robustness of the tasks regarding age, gender, and age-gender recognition from speech signals.
+本文《通过语音频谱图与特殊设计的多重注意力模块实现基于卷积神经网络的年龄与性别识别》的官方实现代码。本实现针对Common Voice数据集开发，但可适配至任何自定义数据集。论文可从[此处](https://www.mdpi.com/1424-8220/21/17/5892)下载。
+
+引言  
+----------------------------  
+语音信号作为人机交互(HCI)的主要输入源，已被用于开发自动语音识别(ASR)、语音情感识别(SER)、性别与年龄识别等多种应用。由于现有方法在提取显著高层语音特征和分类模型方面存在局限，根据年龄和性别对说话人进行分类成为语音处理领域的一项挑战性任务。为解决这些问题，我们提出了一种新颖的端到端年龄性别识别卷积神经网络(CNN)，其配备特殊设计的多重注意力模块(MAM)，可直接处理语音信号。  
+
+我们提出的模型利用MAM从输入数据中高效提取空间与时间显著特征。该MAM机制采用矩形滤波器作为卷积层内核，包含独立的时间注意力和频率注意力分支。时间注意力分支学习检测时序线索，而频率注意力模块则通过聚焦空间频率特征来提取与目标最相关的特征。两种提取的空间与时间特征相互补充，为年龄和性别分类提供了高性能解决方案。  
+
+该年龄性别分类系统在Common Voice数据集和本地开发的韩语语音识别数据集上进行了测试。在Common Voice数据集上，我们的模型在性别、年龄及年龄-性别联合分类任务中分别达到96%、73%和76%的准确率。在韩语语音识别数据集上，三项任务的准确率分别为97%、97%和90%。实验结果表明，我们提出的模型在语音信号的年龄、性别及联合识别任务中具有卓越的鲁棒性和优越性。  
+
 
 <img width="1293" alt="image" src='figs/proposed_framework.png'>
 
+### 音频性别和年龄识别系统流程图
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           数据预处理阶段                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        CommonVoiceDatasetPreprocessor                    │
+│                                                                         │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────────────┐   │
+│  │ 加载原始数据集  │ -> │ 清理无效数据   │ -> │ 保存处理后的音频和标签 │   │
+│  └───────────────┘    └───────────────┘    └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           特征提取阶段                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          SpectrogramGenerator                            │
+│                                                                         │
+│  ┌───────────────────────────┐    ┌───────────────────────────────┐    │
+│  │ 从音频文件提取特征         │ -> │ 保存为图像格式                 │    │
+│  │ (频谱图/梅尔频谱图/MFCC)   │    │ (用于CNN模型输入)              │    │
+│  └───────────────────────────┘    └───────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           数据集创建阶段                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                             VoiceDataset                                 │
+│                                                                         │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────────────┐   │
+│  │ 加载特征图像   │ -> │ 应用数据变换   │ -> │ 创建训练/验证/测试集   │   │
+│  └───────────────┘    └───────────────┘    └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           模型训练阶段                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            VoiceClassifier                               │
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                        模型架构                                    │  │
+│  │                                                                   │  │
+│  │  ┌─────────────┐     ┌─────────────────┐     ┌─────────────┐     │  │
+│  │  │ 特征学习块1  │ --> │ 多注意力模块     │ --> │ 特征学习块2  │     │  │
+│  │  └─────────────┘     └─────────────────┘     └─────────────┘     │  │
+│  │                                │                                  │  │
+│  │                                ▼                                  │  │
+│  │                        ┌─────────────┐                            │  │
+│  │                        │  全连接层   │                            │  │
+│  │                        └─────────────┘                            │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           ModelTrainer                                   │
+│                                                                         │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────────────┐   │
+│  │ 设置训练参数   │ -> │ 训练模型       │ -> │ 保存最佳模型          │   │
+│  └───────────────┘    └───────────────┘    └───────────────────────┘   │
+│                                                      │                  │
+│  ┌───────────────────────────────────────┐           │                  │
+│  │ ModelTrainingMonitoring               │<----------┘                  │
+│  │ (实时监控训练过程)                     │                              │
+│  └───────────────────────────────────────┘                              │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           模型评估阶段                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           ModelEvaluator                                 │
+│                                                                         │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────────────┐   │
+│  │ 加载最佳模型   │ -> │ 在测试集评估   │ -> │ 生成混淆矩阵和报告    │   │
+│  └───────────────┘    └───────────────┘    └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           推理阶段                                       │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           AgeGenderDetector                              │
+│                                                                         │
+│  ┌───────────────┐    ┌───────────────┐    ┌───────────────────────┐   │
+│  │ 加载音频文件   │ -> │ 提取特征       │ -> │ 使用模型预测性别/年龄  │   │
+│  └───────────────┘    └───────────────┘    └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+#### 1. 数据预处理阶段
+- **CommonVoiceDatasetPreprocessor**：处理原始的Common Voice数据集
+  - 加载CSV文件中的音频元数据
+  - 清理无效数据（如缺失标签、非目标性别/年龄组）
+  - 将处理后的音频文件和标签保存到指定目录
+
+#### 2. 特征提取阶段
+- **SpectrogramGenerator**：从音频文件生成特征图像
+  - 支持多种特征类型：频谱图、梅尔频谱图、MFCC
+  - 将特征转换为图像格式并保存
+  - 特征图像将作为CNN模型的输入
+
+#### 3. 数据集创建阶段
+- **VoiceDataset**：创建PyTorch数据集
+  - 加载特征图像和对应标签
+  - 应用数据变换（调整大小、归一化等）
+  - 创建训练集、验证集和测试集
+
+#### 4. 模型训练阶段
+- **VoiceClassifier**：定义模型架构
+  - 特征学习块：提取音频特征
+  - 多注意力模块：关注时间和频率维度的特征
+  - 全连接层：进行最终分类
+- **ModelTrainer**：训练模型
+  - 设置训练参数（批次大小、学习率等）
+  - 训练模型并监控性能
+  - 保存最佳模型
+
+#### 5. 模型评估阶段
+- **ModelEvaluator**：评估模型性能
+  - 在测试集上评估模型
+  - 生成混淆矩阵和分类报告
+  - 保存评估结果
+
+#### 6. 推理阶段
+- **AgeGenderDetector**：使用训练好的模型进行推理
+  - 加载新的音频文件
+  - 提取特征
+  - 使用模型预测性别和/或年龄
+
+这个流程图展示了整个系统从原始音频数据到最终模型预测的完整过程，包括数据处理、特征提取、模型训练和评估的各个步骤。
+
+
 Installation
 ------------------------------
-The proposed method is implemented using tensorflow in windows OS. Installing GPU version of the tensorflow is recommended.
+所提出的方法基于 Torch 在 Ubuntu 操作系统上实现，建议安装 GPU 版本的 Torch 以获得最佳性能。
 
 ### Example conda environment setup
 ```bash
@@ -25,7 +182,8 @@ pip install -r requirements.txt
 
 Usage instructions
 ----------------------------------
-First you need to download Common Voice dataset and put it inside `data/` folder. You can download either [raw](https://www.kaggle.com/datasets/mozillaorg/common-voice/data) dataset or [clean](https://1drv.ms/u/s!AtLl-Rpr0uJohKI71cVKzwcbo76FVg?e=vAar5G) dataset. It is recommended to download **clean** dataset. After downloading and extracting clean dataset into `data/` folder, the structure of the folder should be as following:
+首先需要下载 Common Voice 数据集并放入 `data/` 文件夹。您可以选择下载[原始数据集](https://www.kaggle.com/datasets/mozillaorg/common-voice/data)或[清洗版数据集](https://1drv.ms/u/s!AtLl-Rpr0uJohKI71cVKzwcbo76FVg?e=vAar5G)，建议下载**清洗版**数据集。下载完成后将清洗版数据集解压至 `data/` 文件夹，目录结构应如下所示：
+
 ```bash
 ├──data/
 │  └──CommonVoice/
@@ -42,12 +200,20 @@ First you need to download Common Voice dataset and put it inside `data/` folder
 
 Dataset preparation
 -------------------------------
-Dataset preparation consists of 2 main steps. First, spectrograms are generated for each audio file and saved to `data/CommonVoice/Spectrograms/` folder. Second, `tfrecord` dataset is created and saved to `data/CommonVoice/TFRecord/` folder. To prepare dataset, you should use `src/preprocess_dataset.py` python script. You can run the script using the following command from the powershell terminal inside main repository folder:
+数据集准备包含两个主要步骤：  
+1. 为每个音频文件生成频谱图，并保存至 `data/CommonVoice/Spectrograms/` 文件夹  
+2. 创建 `tfrecord` 格式数据集并保存至 `data/CommonVoice/TFRecord/` 文件夹  
+
+执行以下操作准备数据集：  
+使用 `src/preprocess_dataset.py` Python 脚本，在项目主目录的 PowerShell 终端中运行如下命令：  
+
 ```bash
-# If you are preprocessing `raw` dataset then --dataset_type='raw' should be
+# 若预处理的是原始数据集（raw），需指定 --dataset_type='raw'
 python .\src\preprocess_dataset.py --dataset_dir='data/CommonVoice/' --dataset_type='clean'
-```
-After you completed the dataset preprocessing, your `data/` folder structure will be as following:
+```  
+
+完成数据集预处理后，`data/` 文件夹结构将如下所示：  
+
 
 ```bash
 ├───data/
@@ -91,24 +257,22 @@ After you completed the dataset preprocessing, your `data/` folder structure wil
 
 Model training
 -------------------------------
-
-To train model for age, gender, or gender_age classification, you can use `src/train.py` python script. Example code for using the `train.py` script is given below:
+要训练年龄、性别或年龄-性别分类模型，可使用 `src/train.py` Python 脚本。以下为使用 `train.py` 脚本的示例代码：
 
 ```bash
 python .\src\train.py --dataset_dir='data/CommonVoice' --cls_task='age' --num_epochs=20 --show_live_plot=True
 ```
 
-You can specify some other training parameters such as `--batch_size`, `--learning_rate`. Default value for `--batch_size` is 128 and for `--learning_rate` is 0.0001. There is also `--show_summary` parameter to show the model summary. Default value for `--show_summary` and `--show_live_plot` is False. After the training is finished, training log files are saved to `results/` folder depending on the classification task, and the best model is saved to `models/` folder. 
-
+您可指定其他训练参数，例如 `--batch_size` 和 `--learning_rate`。`--batch_size` 默认值为 128，`--learning_rate` 默认值为 0.0001。另有 `--show_summary` 参数用于显示模型摘要。`--show_summary` 和 `--show_live_plot` 的默认值均为 False。训练完成后，训练日志文件将根据分类任务保存至 `results/` 文件夹，最佳模型将保存至 `models/` 文件夹。
 Pretrained models 
 --------------------------------
 pretrained models can be downloaded from [here](https://1drv.ms/u/s!AtLl-Rpr0uJohKJ6_236uKDuJsLkhA?e=7zmPvM)
 
-**Note:** pretrained models results are higher than the results given in the paper. Because these models are recently trained with a bit different training parameters.
+**Note:** 预训练模型的性能优于论文中报告的结果，这是因为这些模型是近期使用稍加调整的训练参数重新训练的。
 
 Model testing
 -------------------------------
-To test trained model, you can use `src/test.py` python script. The code example is given below:
+要测试训练好的模型，可以使用 `src/test.py` Python 脚本。使用方法如下：
 
 ```bash
 python .\src\test.py --dataset_dir='data/CommonVoice' --model_path='models/age/best_model_age.h5' --cls_task='age'
@@ -116,7 +280,7 @@ python .\src\test.py --dataset_dir='data/CommonVoice' --model_path='models/age/b
 
 Inference code
 -------------------------------
-To test trained model on a single audio file, you can use `src/inference.py` python script. The code example is given below:
+要使用训练好的模型测试单个音频文件，可以使用 `src/inference.py` Python 脚本。示例如下：
 
 ```bash
 python .\src\inference.py --model_path='models/age/best_model_age.h5' --audio_file='data/CommonVoice/Audio/cv-valid-test/sample-000001.mp3' --cls_task='age'
