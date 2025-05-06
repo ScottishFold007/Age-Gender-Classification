@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import tensorflow as tf
 from tensorflow import keras
-from pytorch_model_builder import VoiceClassifier
+from model_builder import VoiceClassifier
 
 class TensorFlowToPyTorchConverter:
     def __init__(self, tf_model_path, cls_task):
