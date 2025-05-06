@@ -1,5 +1,5 @@
 '''
-python model_converter.py --mode predict --model_path age_gender_models/age_classification_acc_81.h5 --cls_task age --audio_file path/to/audio.mp3
+python model_converter.py --mode convert --model_path age_gender_models/age_classification_acc_81.h5 --cls_task age
 '''
 
 import os
