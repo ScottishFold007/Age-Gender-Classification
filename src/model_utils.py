@@ -1,43 +1,44 @@
 import os
 import numpy as np
 import pandas as pd
-from matplotlib.gridspec import GridSpec
 import matplotlib.pyplot as plt
-from data_utils import TFRecordDatasetProcessor
-from model_builder import ModelBuilder
+from matplotlib.gridspec import GridSpec
+import seaborn as sns
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-from seaborn import heatmap
-from keras.callbacks import CSVLogger, ModelCheckpoint
-from keras.optimizers import Adam
-from keras.models import load_model
-from keras.utils import load_img, img_to_array
-import librosa
-import tensorflow as tf
+import time
 import logging
-plt.rcParams.update({'font.size': 10})
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-logging.disable(logging.WARNING)
+from datetime import datetime
+from tqdm import tqdm
+from pytorch_model_builder import VoiceClassifier
+import librosa
+from PIL import Image
+import torchvision.transforms as transforms
 
 class ModelTrainer:
     def __init__(self, dataset_dir, cls_task):
         self.dataset_dir = dataset_dir
         self.cls_task = cls_task
         self.reg_value = 0.01
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._max_symbols = 150
         self._print_symbol = '='
-    
+        
+        # 创建保存目录
+        os.makedirs(f'results/{self.cls_task}', exist_ok=True)
+        os.makedirs(f'models/{self.cls_task}', exist_ok=True)
+        
+        self.log_file = f'results/{self.cls_task}/train_logs_{self.cls_task}.csv'
+        self.best_model_filepath = f'models/{self.cls_task}/best_model_{self.cls_task}.pth'
+        
     def printTitle(self, title):
         print('\n')
         text_length = len(title)
         num_symbols = (self._max_symbols - text_length)//2
         print(num_symbols * self._print_symbol + "> " + title + " <" + num_symbols * self._print_symbol)
-        
-    def _setTrainingMonitoringSettings(self):
-        self.log_file = f'results/{self.cls_task}/train_logs_{self.cls_task}.csv'
-        self.logger = CSVLogger(self.log_file)
-        self.best_model_filepath = 'models/' + self.cls_task + '/best_model_' + self.cls_task + '.h5'
-        self.best_model_saver = ModelCheckpoint(self.best_model_filepath, monitor='val_accuracy', save_best_only=True)
-        self._callbacks = [self.logger, self.best_model_saver]
     
     def getBestModelFilepath(self):
         return self.best_model_filepath
@@ -46,41 +47,169 @@ class ModelTrainer:
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.num_epochs = num_epochs
-        self.opt = Adam(learning_rate=learning_rate)
     
-    def _buildDataset(self):
-        self.dataset_processor = TFRecordDatasetProcessor(self.dataset_dir)
-        self.tr_dataset = self.dataset_processor.getTrainTFRecordDataset(self.cls_task, self.batch_size)
-        self.val_dataset = self.dataset_processor.getValidationTFRecordDataset(self.cls_task, self.batch_size)
-        self.num_classes = self.dataset_processor.getNumberOfClasses(self.cls_task)
-        self.category_names = self.dataset_processor.getCategoryNames(self.cls_task)
+    def _buildDataset(self, train_loader, val_loader):
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        
+        # 获取类别数量
+        if self.cls_task == 'gender':
+            self.num_classes = 2
+        elif self.cls_task == 'age':
+            self.num_classes = 6
+        else:  # gender_age
+            self.num_classes = 12
     
     def _buildModel(self, show_summary=False):
-        h, w = self.dataset_processor.getInputImageSize()
-        inp_shape = (h, w, 3)
-        self.model_builder = ModelBuilder(inp_shape, self.num_classes, self.reg_value)
-        self.model = self.model_builder.build_model(show_summary=show_summary)
-        self.model.compile(loss="sparse_categorical_crossentropy", optimizer=self.opt, metrics=["accuracy"])
+        # 假设输入图像大小为64x64，3通道
+        self.model = VoiceClassifier(input_shape=(3, 64, 64), 
+                                    num_classes=self.num_classes, 
+                                    reg_value=self.reg_value).to(self.device)
+        
+        if show_summary:
+            self.model.summary()
+        
+        # 定义损失函数和优化器
+        self.criterion = nn.CrossEntropyLoss()
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, 
+                                   weight_decay=self.reg_value)
     
-    def startTraining(self, show_model_summary=False, show_live_plot=False):
-        self._buildDataset()
+    def startTraining(self, train_loader, val_loader, show_model_summary=False, show_live_plot=False):
+        self._buildDataset(train_loader, val_loader)
         self._buildModel(show_summary=show_model_summary)
-        self._setTrainingMonitoringSettings()
+        
+        # 初始化训练监控
         if show_live_plot:
             self.model_monitoring = ModelTrainingMonitoring(self.log_file, self.cls_task)
-            self._callbacks.append(self.model_monitoring)
-        self.model.fit(self.tr_dataset, epochs=self.num_epochs, validation_data=self.val_dataset, callbacks=self._callbacks, shuffle=False)
+        
+        # 初始化日志
+        log_data = {
+            'epoch': [], 
+            'loss': [], 
+            'accuracy': [], 
+            'val_loss': [], 
+            'val_accuracy': []
+        }
+        
+        best_val_acc = 0.0
+        
+        for epoch in range(self.num_epochs):
+            self.printTitle(f"Epoch {epoch+1}/{self.num_epochs}")
+            
+            # 训练阶段
+            self.model.train()
+            train_loss = 0.0
+            train_correct = 0
+            train_total = 0
+            
+            with tqdm(self.train_loader, desc="Training") as pbar:
+                for inputs, labels in pbar:
+                    inputs, labels = inputs.to(self.device), labels.to(self.device)
+                    
+                    # 梯度清零
+                    self.optimizer.zero_grad()
+                    
+                    # 前向传播
+                    outputs = self.model(inputs)
+                    loss = self.criterion(outputs, labels)
+                    
+                    # 反向传播和优化
+                    loss.backward()
+                    self.optimizer.step()
+                    
+                    # 统计
+                    train_loss += loss.item()
+                    _, predicted = torch.max(outputs.data, 1)
+                    train_total += labels.size(0)
+                    train_correct += (predicted == labels).sum().item()
+                    
+                    # 更新进度条
+                    pbar.set_postfix({
+                        'loss': train_loss / (pbar.n + 1),
+                        'acc': 100. * train_correct / train_total
+                    })
+            
+            train_loss = train_loss / len(self.train_loader)
+            train_acc = 100. * train_correct / train_total
+            
+            # 验证阶段
+            self.model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+            
+            with torch.no_grad():
+                with tqdm(self.val_loader, desc="Validation") as pbar:
+                    for inputs, labels in pbar:
+                        inputs, labels = inputs.to(self.device), labels.to(self.device)
+                        
+                        # 前向传播
+                        outputs = self.model(inputs)
+                        loss = self.criterion(outputs, labels)
+                        
+                        # 统计
+                        val_loss += loss.item()
+                        _, predicted = torch.max(outputs.data, 1)
+                        val_total += labels.size(0)
+                        val_correct += (predicted == labels).sum().item()
+                        
+                        # 更新进度条
+                        pbar.set_postfix({
+                            'loss': val_loss / (pbar.n + 1),
+                            'acc': 100. * val_correct / val_total
+                        })
+            
+            val_loss = val_loss / len(self.val_loader)
+            val_acc = 100. * val_correct / val_total
+            
+            # 打印结果
+            print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
+            print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+            
+            # 更新日志
+            log_data['epoch'].append(epoch + 1)
+            log_data['loss'].append(train_loss)
+            log_data['accuracy'].append(train_acc)
+            log_data['val_loss'].append(val_loss)
+            log_data['val_accuracy'].append(val_acc)
+            
+            # 保存日志
+            pd.DataFrame(log_data).to_csv(self.log_file, index=False)
+            
+            # 更新监控图
+            if show_live_plot:
+                self.model_monitoring.update(log_data)
+            
+            # 保存最佳模型
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                torch.save(self.model.state_dict(), self.best_model_filepath)
+                print(f"保存最佳模型，验证准确率: {val_acc:.2f}%")
+        
+        # 训练结束，保存最终图表
+        if show_live_plot:
+            self.model_monitoring.save_figure()
+        
+        print(f"训练完成！最佳验证准确率: {best_val_acc:.2f}%")
+
 
 class ModelEvaluator:
     def __init__(self, dataset_dir, cls_task, model_path):
         self.dataset_dir = dataset_dir
         self.cls_task = cls_task
         self.model_path = model_path
-        self.dataset_processor = TFRecordDatasetProcessor(self.dataset_dir)
-        self.category_names = self.dataset_processor.getCategoryNames(self.cls_task)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # 初始化标签解码器
+        self._decode_gender_age = {0:'female-teens', 1:'female-twenties', 2:'female-thirties', 3:'female-fourties', 4:'female-fifties', 5:'female-sixties',  
+                                6:'male-teens', 7:'male-twenties', 8:'male-thirties', 9:'male-fourties', 10:'male-fifties', 11:'male-sixties'}
+        self._decode_gender = {0:'male', 1:'female'}
+        self._decode_age = {0:'teens', 1:'twenties', 2:'thirties', 3:'fourties', 4:'fifties', 5:'sixties'}
+        
+        # 设置输出文件路径
         self.cm_plot_file = f'results/{self.cls_task}/confusion_matrix_{self.cls_task}.png'
         self.test_log_file = f'results/{self.cls_task}/test_log_{self.cls_task}.txt'
-        self.batch_size = 128
+        
         self._max_symbols = 150
         self._print_symbol = '='
     
@@ -91,70 +220,142 @@ class ModelEvaluator:
         message = num_symbols * self._print_symbol + "> " + title + " <" + num_symbols * self._print_symbol
         print(message)
         return message
-
-    def evaluateBestModel(self):
-        message = self.printTitle(f" Evaluating the best model on the test dataset for {self.cls_task} classification ")
-        self.test_dataset = self.dataset_processor.getTestTFRecordDataset(self.cls_task, self.batch_size)
-        self.best_model = load_model(self.model_path)
+    
+    def get_category_names(self):
+        if self.cls_task == 'gender':
+            return list(self._decode_gender.values())
+        elif self.cls_task == 'age':
+            return list(self._decode_age.values())
+        else:  # gender_age
+            return list(self._decode_gender_age.values())
+    
+    def evaluateBestModel(self, test_loader):
+        message = self.printTitle(f" 在测试数据集上评估最佳模型 ({self.cls_task} 分类) ")
+        
+        # 获取类别数量
+        if self.cls_task == 'gender':
+            num_classes = 2
+        elif self.cls_task == 'age':
+            num_classes = 6
+        else:  # gender_age
+            num_classes = 12
+        
+        # 加载模型
+        model = VoiceClassifier(input_shape=(3, 64, 64), 
+                               num_classes=num_classes).to(self.device)
+        model.load_state_dict(torch.load(self.model_path))
+        model.eval()
+        
+        # 获取类别名称
+        self.category_names = self.get_category_names()
+        
+        # 评估模型
         labels = []
         predictions = []
-        for img, lab in self.test_dataset:
-            labels.extend(lab.numpy())
-            pred = self.best_model.predict(img, verbose=0)
-            predictions.extend(np.argmax(pred, axis=1))
-
+        
+        with torch.no_grad():
+            for inputs, targets in tqdm(test_loader, desc="测试中"):
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+                
+                labels.extend(targets.cpu().numpy())
+                predictions.extend(preds.cpu().numpy())
+        
+        # 计算评估指标
         acc = accuracy_score(labels, predictions)
         cm = confusion_matrix(labels, predictions)
         clr = classification_report(labels, predictions, target_names=self.category_names)
         
-        with open(self.test_log_file, 'w') as f: 
-            message = self.printTitle(" Accuracy score ")
+        # 保存评估结果
+        with open(self.test_log_file, 'w') as f:
+            message = self.printTitle(" 准确率 ")
             f.write(message + '\n')
             
             message = "{:.2f}".format(acc)
             f.write(message + '\n')
             print(message)
             
-            message = self.printTitle(" Confusion matrix ")
+            message = self.printTitle(" 混淆矩阵 ")
             f.write(message + '\n')
             
             print(cm)
             for row in cm:
-                # Convert each row to a string and join them with a tab separator
                 row_str = '\t'.join(map(str, row))
-                # Write the row string followed by a newline character
                 f.write(row_str + '\n')
             
-            message = self.printTitle(" Classification report ")
+            message = self.printTitle(" 分类报告 ")
             f.write(message + '\n')
             
             print(clr)
             f.write(clr)
         
-        plot_confusion_matrix(cm, target_names=self.category_names, filename=self.cm_plot_file)
+        # 绘制混淆矩阵
+        self.plot_confusion_matrix(cm, target_names=self.category_names, filename=self.cm_plot_file)
+    
+    def plot_confusion_matrix(self, cm, target_names, filename, title='混淆矩阵', normalize=True):
+        if normalize:
+            cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+            cm *= 100
+        
+        plt.figure(figsize=(10, 8))
+        ax = sns.heatmap(cm, annot=True, fmt='.1f', cmap='Blues', 
+                         xticklabels=target_names, yticklabels=target_names, 
+                         linecolor='white', linewidths=.5)
+        ax.set(xlabel='预测标签', ylabel='真实标签')
+        ax.set_title(title)
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+        ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+        plt.tight_layout()
+        plt.savefig(filename)
+        plt.close()
+
 
 class AgeGenderDetector:
     def __init__(self, model_path, cls_task):
         self.cls_task = cls_task
-        self.model = load_model(model_path)
-        self._initializeLabelDecoder()
-        self.sampling_rate = 16000
-        self.n_fft = 256
-        self.num_overlap = 128
-        self._spec_img_size = (64, 64)
-
-    def _initializeLabelDecoder(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # 获取类别数量
+        if cls_task == 'gender':
+            num_classes = 2
+        elif cls_task == 'age':
+            num_classes = 6
+        else:  # gender_age
+            num_classes = 12
+        
+        # 加载模型
+        self.model = VoiceClassifier(input_shape=(3, 64, 64), 
+                                    num_classes=num_classes).to(self.device)
+        self.model.load_state_dict(torch.load(model_path))
+        self.model.eval()
+        
+        # 初始化标签解码器
         self._decode_gender_age = {0:'female-teens', 1:'female-twenties', 2:'female-thirties', 3:'female-fourties', 4:'female-fifties', 5:'female-sixties',  
                                 6:'male-teens', 7:'male-twenties', 8:'male-thirties', 9:'male-fourties', 10:'male-fifties', 11:'male-sixties'}
         self._decode_gender = {0:'male', 1:'female'}
         self._decode_age = {0:'teens', 1:'twenties', 2:'thirties', 3:'fourties', 4:'fifties', 5:'sixties'}
-
+        
+        # 设置音频处理参数
+        self.sampling_rate = 16000
+        self.n_fft = 256
+        self.num_overlap = 128
+        self._spec_img_size = (64, 64)
+        
+        # 设置图像转换
+        self.transform = transforms.Compose([
+            transforms.Resize(self._spec_img_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+    
     def scale_minmax(self, X, min=0, max=255):
         X_std = (X - X.min()) / (X.max() - X.min())
         X_scaled = X_std * (max - min) + min
         return X_scaled
-
+    
     def saveSpectrogram(self, data, fn):
+        plt.figure(figsize=(5, 5))
         plt.axis('off')
         fig = plt.imshow(data, aspect='auto', origin='lower', interpolation='none')
         fig.axes.get_xaxis().set_visible(False)
@@ -162,7 +363,7 @@ class AgeGenderDetector:
         plt.tight_layout()
         plt.savefig(fn, bbox_inches='tight', pad_inches=0)
         plt.close()
-
+    
     def _extractSpectrogram(self, audio_file):
         y, sr = librosa.load(audio_file, sr=self.sampling_rate)
         spec = librosa.stft(y, n_fft=self.n_fft, hop_length=self.num_overlap)
@@ -171,26 +372,38 @@ class AgeGenderDetector:
         img = self.scale_minmax(spec).astype(np.uint8)
         out_file = 'temp.png'
         self.saveSpectrogram(img, out_file)
-        inp_spec = img_to_array(load_img(out_file, target_size=self._spec_img_size))
-        return inp_spec
+        return out_file
     
     def getPredictionLabelName(self, encod_lab):
-        if self.cls_task=='age':
+        if self.cls_task == 'age':
             return self._decode_age.get(encod_lab)
-        elif self.cls_task=='gender':
+        elif self.cls_task == 'gender':
             return self._decode_gender.get(encod_lab)
-        elif self.cls_task=='gender_age':
+        elif self.cls_task == 'gender_age':
             return self._decode_gender_age.get(encod_lab)
-
+    
     def getPrediction(self, audio_file):
-        inp_spec = self._extractSpectrogram(audio_file)
-        inp_spec = np.expand_dims(inp_spec/255.0, axis=0)
-        inp_spec = inp_spec.reshape(-1, 64, 64, 3)
-        prediction = self.model.predict(inp_spec, verbose=0)
-        return self.getPredictionLabelName(int(np.argmax(prediction, axis=1)))
+        # 提取频谱图
+        spec_file = self._extractSpectrogram(audio_file)
+        
+        # 加载图像并应用转换
+        image = Image.open(spec_file).convert('RGB')
+        image = self.transform(image).unsqueeze(0).to(self.device)
+        
+        # 预测
+        with torch.no_grad():
+            output = self.model(image)
+            _, predicted = torch.max(output, 1)
+            predicted_label = predicted.item()
+        
+        # 删除临时文件
+        if os.path.exists(spec_file):
+            os.remove(spec_file)
+        
+        return self.getPredictionLabelName(predicted_label)
 
 
-class ModelTrainingMonitoring(tf.keras.callbacks.Callback):
+class ModelTrainingMonitoring:
     def __init__(self, log_file, cls_task):
         plt.rcParams['figure.figsize'] = (18, 4)
         plt.ion()
@@ -202,27 +415,24 @@ class ModelTrainingMonitoring(tf.keras.callbacks.Callback):
         self.gridspec = GridSpec(1, 2, figure=self.main_fig)
         self.ax_acc = self.get_subplot(self.gridspec[0, 0], title=self._acc_title)
         self.ax_loss = self.get_subplot(self.gridspec[0, 1], title=self._loss_title)
-        self.log_file = log_file
-        self.wait_time = 0.001
-
+    
     def get_subplot(self, grid, title):
         ax = self.main_fig.add_subplot(grid)
-        # ax.set_axis_off()
         ax.set_title(title)
         return ax
-
-    def on_epoch_end(self, epoch, logs=None):
-        df = pd.read_csv(self.log_file)
-        epochs = df['epoch'].values
-        tr_loss = df['loss'].values
-        tr_acc = df['accuracy'].values
-        val_loss = df['val_loss'].values
-        val_acc = df['val_accuracy'].values
+    
+    def update(self, log_data):
+        epochs = log_data['epoch']
+        tr_loss = log_data['loss']
+        tr_acc = log_data['accuracy']
+        val_loss = log_data['val_loss']
+        val_acc = log_data['val_accuracy']
+        
         self.plotAccuracy(epochs, tr_acc, val_acc)
         self.plotLoss(epochs, tr_loss, val_loss)
         plt.draw()
-        plt.pause(self.wait_time)
-
+        plt.pause(0.001)
+    
     def plotLoss(self, epochs, tr_loss, val_loss):
         self.ax_loss.cla()
         self.ax_loss.set_title(self._loss_title)
@@ -235,7 +445,7 @@ class ModelTrainingMonitoring(tf.keras.callbacks.Callback):
         self.ax_loss.legend(loc='upper right')
         self.ax_loss.set_aspect('auto')
         self.ax_loss.grid()
-
+    
     def plotAccuracy(self, epochs, tr_acc, val_acc):
         self.ax_acc.cla()
         self.ax_acc.set_title(self._acc_title)
@@ -248,22 +458,7 @@ class ModelTrainingMonitoring(tf.keras.callbacks.Callback):
         self.ax_acc.legend(loc='lower right')
         self.ax_acc.set_aspect('auto')
         self.ax_acc.grid()
-
-    def on_train_end(self, logs=None):
+    
+    def save_figure(self):
         plt.savefig(f"results/{self.cls_task}/training_metrics_{self.cls_task}.png", bbox_inches='tight')
         plt.close()
-
-
-def plot_confusion_matrix(cm, target_names, filename, title='Confusion matrix of Common Voice dataset', normalize=True):
-    if normalize:
-        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-        cm *= 100
-
-    ax = heatmap(cm, annot=True, fmt='.1f', cmap='Blues', xticklabels=target_names, yticklabels=target_names, linecolor='white', linewidths=.5, cbar_kws={'pad': 0.02})
-    ax.set(xlabel='Predicted label', ylabel='True label')
-    ax.set_title(title)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
-    plt.savefig(filename, bbox_inches='tight')
-    plt.tight_layout()
-    plt.show()
