@@ -2,15 +2,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def calculate_same_padding(input_size, kernel_size, stride):
+    """计算'same'填充所需的填充值"""
+    if input_size % stride == 0:
+        padding = max(kernel_size - stride, 0)
+    else:
+        padding = max(kernel_size - (input_size % stride), 0)
+    return padding // 2, padding - padding // 2
+
 class FeatureLearningBlock(nn.Module):
     def __init__(self, in_channels, reg_value=None):
         super(FeatureLearningBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 120, kernel_size=9, stride=2, padding='same')
+        # 使用计算的填充值而不是'same'
+        self.conv1 = nn.Conv2d(in_channels, 120, kernel_size=9, stride=2, padding=4)  # padding=4 模拟'same'
         self.bn1 = nn.BatchNorm2d(120)
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(120, 256, kernel_size=5, stride=1, padding='same')
+        self.conv2 = nn.Conv2d(120, 256, kernel_size=5, stride=1, padding=2)  # padding=2 模拟'same'
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv3 = nn.Conv2d(256, 384, kernel_size=3, padding='same')
+        self.conv3 = nn.Conv2d(256, 384, kernel_size=3, padding=1)  # padding=1 模拟'same'
         self.bn3 = nn.BatchNorm2d(384)
         
         # 添加权重正则化
@@ -32,9 +41,9 @@ class FeatureLearningBlock(nn.Module):
 class TimeAttention(nn.Module):
     def __init__(self, in_channels, reg_value=None):
         super(TimeAttention, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=(1, 9), padding='same')
-        self.conv2 = nn.Conv2d(64, 64, kernel_size=(1, 3), padding='same')
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=(1, 3), padding='same')
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=(1, 9), padding=(0, 4))  # 模拟'same'
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=(1, 3), padding=(0, 1))  # 模拟'same'
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=(1, 3), padding=(0, 1))  # 模拟'same'
         self.bn = nn.BatchNorm2d(64)
         
         # 添加权重正则化
@@ -53,9 +62,9 @@ class TimeAttention(nn.Module):
 class FrequencyAttention(nn.Module):
     def __init__(self, in_channels, reg_value=None):
         super(FrequencyAttention, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=(9, 1), padding='same')
-        self.conv2 = nn.Conv2d(64, 64, kernel_size=(3, 1), padding='same')
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=(3, 1), padding='same')
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=(9, 1), padding=(4, 0))  # 模拟'same'
+        self.conv2 = nn.Conv2d(64, 64, kernel_size=(3, 1), padding=(1, 0))  # 模拟'same'
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=(3, 1), padding=(1, 0))  # 模拟'same'
         self.bn = nn.BatchNorm2d(64)
         
         # 添加权重正则化
