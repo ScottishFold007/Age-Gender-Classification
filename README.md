@@ -107,7 +107,21 @@ Dataset preparation
 ```bash
 # 若预处理的是原始数据集（raw），需指定 --dataset_type='raw'
 python .\src\preprocess_dataset.py --dataset_dir='data/CommonVoice/' --dataset_type='clean'
-```  
+```
+**清理后的元数据**：
+   - 格式：CSV 文件
+   - 保留字段：`filename`, `age`, `gender`, `gender_age`
+   - 添加字段：`gender_age`（组合性别和年龄，如 `male-twenties`）
+   - 过滤条件：
+     - 移除 `gender` 为 `other` 的样本
+     - 移除年龄组为 `seventies` 和 `eighties` 的样本（样本量较少）
+     - 移除包含 NaN 值的行
+     - 
+**特征图像**：
+   - 格式：PNG 图像文件
+   - 类型：频谱图、梅尔频谱图或 MFCC
+   - 大小：通常调整为 64x64 像素
+   - 存储位置：根据特征类型存储在不同目录
 
 完成数据集预处理后，`data/` 文件夹结构将如下所示：  
 
@@ -151,6 +165,26 @@ python .\src\preprocess_dataset.py --dataset_dir='data/CommonVoice/' --dataset_t
 │       │   │   ├───spec_data_000.tfrecord
 │       │   │   ├───spec_data_001.tfrecord
 ```
+
+## 数据集统计信息
+
+Common Voice 数据集经过清理后，通常包含以下类别：
+
+1. **性别分类**：
+   - `male`：男性
+   - `female`：女性
+
+2. **年龄分类**：
+   - `teens`：青少年（13-19岁）
+   - `twenties`：20多岁
+   - `thirties`：30多岁
+   - `fourties`：40多岁
+   - `fifties`：50多岁
+   - `sixties`：60多岁
+
+3. **性别-年龄组合分类**：
+   - `male-teens`, `male-twenties`, ..., `male-sixties`
+   - `female-teens`, `female-twenties`, ..., `female-sixties`
 
 Model training
 -------------------------------
