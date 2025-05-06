@@ -1,16 +1,16 @@
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import os.path as osp
-import tensorflow as tf
-from keras.utils import load_img, img_to_array
-from shutil import move, rmtree
+import numpy as np
 import pandas as pd
-from tabulate import tabulate
-from glob import glob
 import librosa
 import matplotlib.pyplot as plt
-import numpy as np
+from shutil import move, rmtree
+from tabulate import tabulate
+from glob import glob
+from PIL import Image
 from alive_progress import alive_bar
+import torch
+from torch.utils.data import Dataset, DataLoader
 
 class CommonVoiceDatasetPreprocessor:
     def __init__(self, dataset_dir):
@@ -54,13 +54,16 @@ class CommonVoiceDatasetPreprocessor:
                 os.remove(fn)
     
     def deleteFiles(self, path):
-        filenames = os.listdir(path)
-        n = len(filenames)
-        with alive_bar(n) as bar:
-            for fn in filenames:
-                os.remove(osp.join(path, fn))
-                bar()
-        os.removedirs(path)
+        if os.path.exists(path):
+            filenames = os.listdir(path)
+            n = len(filenames)
+            with alive_bar(n) as bar:
+                for fn in filenames:
+                    os.remove(osp.join(path, fn))
+                    bar()
+            os.removedirs(path)
+        else:
+            print(f"路径不存在: {path}")
     
     def loadDataset(self, mode):
         if mode in self._modes:
@@ -182,14 +185,14 @@ class SpectrogramGenerator:
         plt.savefig(fn, bbox_inches='tight', pad_inches=0)
         plt.close()
 
-    def startEtractingSpectrograms(self):
+    def startExtractingSpectrograms(self):
         for mode in self._modes:
             self.printTitle(f'Spectrogram generation started for {mode} dataset')
             folder_name = 'cv-valid-' + mode
             self.out_dir = osp.join(self.spectrogram_dir, folder_name)
             os.makedirs(self.out_dir, exist_ok=True)
             audio_files_dir = osp.join(self.audio_dir, folder_name)
-            audio_files = glob(audio_files_dir + "\\*.mp3")
+            audio_files = glob(os.path.join(audio_files_dir, "*.mp3"))
             n = len(audio_files)
             print(f'Reading audio files from ==> {audio_files_dir}')
             print(f'Number of audio files ==> {n}')
@@ -207,213 +210,84 @@ class SpectrogramGenerator:
                     bar()
 
 
-class TFRecordDatasetProcessor:
-    def __init__(self, dataset_dir):
-        self.tfrecord_dir = osp.join(dataset_dir, 'TFRecord')
-        self._audio_dir = osp.join(dataset_dir, 'Audio')
-        self._spec_dir = osp.join(dataset_dir, 'Spectrograms')
-        os.makedirs(self.tfrecord_dir, exist_ok=True)
-        self._modes = ['train', 'dev', 'test']
-        self._tfrecord_size = 300
-        self._spec_img_size = (64, 64)
-        self._max_symbols = 150
-        self._print_symbol = '='
-        self._initializeLabelEncoderAndDecoder()
-        self._feature_description = {
-                'fpath': tf.io.FixedLenFeature([], tf.string),
-                'img': tf.io.FixedLenFeature([], tf.string),
-                'img_h': tf.io.FixedLenFeature([], tf.int64),
-                'img_w': tf.io.FixedLenFeature([], tf.int64),
-                'chan': tf.io.FixedLenFeature([], tf.int64),
-                'lab_age': tf.io.FixedLenFeature([], tf.int64),
-                'lab_gender': tf.io.FixedLenFeature([], tf.int64),
-                'lab_gender_age': tf.io.FixedLenFeature([], tf.int64)}
+class VoiceDataset(Dataset):
+    def __init__(self, dataset_dir, mode, cls_task='gender_age', transform=None):
+        self.dataset_dir = dataset_dir
+        self.audio_dir = osp.join(dataset_dir, 'Audio')
+        self.spec_dir = osp.join(dataset_dir, 'Spectrograms')
+        self.mode = mode
+        self.cls_task = cls_task
+        self.transform = transform
         
-    def printTitle(self, title):
-        print('\n')
-        text_length = len(title)
-        num_symbols = (self._max_symbols - text_length)//2
-        print(num_symbols * self._print_symbol + "> " + title + " <" + num_symbols * self._print_symbol)
-        
-    def _initializeLabelEncoderAndDecoder(self):
+        # 初始化标签编码器
         self._encode_gender_age = {'female-teens': 0, 'female-twenties': 1, 'female-thirties': 2, 'female-fourties': 3, 'female-fifties': 4, 'female-sixties': 5,  
                                 'male-teens': 6, 'male-twenties': 7, 'male-thirties': 8, 'male-fourties': 9, 'male-fifties': 10, 'male-sixties': 11}
         self._encode_gender = {'male': 0, 'female': 1}
         self._encode_age = {'teens': 0, 'twenties': 1, 'thirties': 2, 'fourties': 3, 'fifties': 4, 'sixties': 5}
         
-        self._decode_gender_age = {0:'female-teens', 1:'female-twenties', 2:'female-thirties', 3:'female-fourties', 4:'female-fifties', 5:'female-sixties',  
-                                6:'male-teens', 7:'male-twenties', 8:'male-thirties', 9:'male-fourties', 10:'male-fifties', 11:'male-sixties'}
-        self._decode_gender = {0:'male', 1:'female'}
-        self._decode_age = {0:'teens', 1:'twenties', 2:'thirties', 3:'fourties', 4:'fifties', 5:'sixties'}
+        # 加载数据集
+        folder_name = f'cv-valid-{mode}'
+        csv_path = osp.join(self.audio_dir, f'{folder_name}.csv')
+        self.data = pd.read_csv(csv_path)
+        
+    def __len__(self):
+        return len(self.data)
     
-    def getDecodedGender(self, encod_lab):
-        return self._decode_gender.get(encod_lab)
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        img_path = osp.join(self.spec_dir, f"cv-valid-{self.mode}", row['filename'].replace('.mp3', '.png'))
+        
+        # 加载图像
+        image = Image.open(img_path).convert('RGB')
+        if self.transform:
+            image = self.transform(image)
+        
+        # 获取标签
+        if self.cls_task == 'gender':
+            label = self._encode_gender[row['gender']]
+        elif self.cls_task == 'age':
+            label = self._encode_age[row['age']]
+        else:  # gender_age
+            label = self._encode_gender_age[row['gender_age']]
+            
+        return image, label
     
-    def getDecodedAge(self, encod_lab):
-        return self._decode_age.get(encod_lab)
-    
-    def getDecodedGenderAge(self, encod_lab):
-        return self._decode_gender_age.get(encod_lab)
-    
-    def getCategoryNames(self, cls_task):
-        if cls_task=='age':
-            return self._encode_age.keys()
-        elif cls_task=='gender':
-            return self._encode_gender.keys()
-        elif cls_task=='gender_age':
-            return self._encode_gender_age.keys()
-    
-    def getNumberOfClasses(self, category):
-        if category=='age':
-            return len(self._encode_age)
-        elif category=='gender':
+    def get_num_classes(self):
+        if self.cls_task == 'gender':
             return len(self._encode_gender)
-        elif category=='gender_age':
+        elif self.cls_task == 'age':
+            return len(self._encode_age)
+        else:  # gender_age
             return len(self._encode_gender_age)
     
-    def getInputImageSize(self):
-        return self._spec_img_size
-    
-    @staticmethod
-    def _bytesFeature(value):
-        """Returns a bytes_list from a string / byte."""
-        if isinstance(value, type(tf.constant(0))):
-            value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
-        return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
-    @staticmethod
-    def _floatFeature(value):
-        """Returns a float_list from a float / double."""
-        return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
-    @staticmethod
-    def _int64Feature(value):
-        """Returns an int64_list from a bool / enum / int / uint."""
-        return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
-    @classmethod
-    def serializeExample(self, fpath, img, img_h, img_w, chan, lab_age, lab_gender, lab_gender_age):
-        """
-        Creates a tf.train.Example message ready to be written to a file.
-        """
-        # Create a dictionary mapping the feature name to the tf.train.Example-compatible data type.
-        feature = {
-            'fpath': self._bytesFeature(fpath),
-            'img': self._bytesFeature(img),
-            'img_h': self._int64Feature(img_h),
-            'img_w': self._int64Feature(img_w),
-            'chan': self._int64Feature(chan),
-            'lab_age': self._int64Feature(lab_age),
-            'lab_gender': self._int64Feature(lab_gender),
-            'lab_gender_age': self._int64Feature(lab_gender_age)}
+    def get_class_names(self):
+        if self.cls_task == 'gender':
+            return list(self._encode_gender.keys())
+        elif self.cls_task == 'age':
+            return list(self._encode_age.keys())
+        else:  # gender_age
+            return list(self._encode_gender_age.keys())
 
-        # Create a Features message using tf.train.Example.
-        example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
-        return example_proto.SerializeToString()
+
+# 使用示例
+def get_dataloaders(dataset_dir, batch_size=32, cls_task='gender_age'):
+    from torchvision import transforms
     
-    def startWritingTFRecordFiles(self):
-        for mode in self._modes:
-            self.printTitle(f'Writing TFRecord files started for {mode} dataset')
-            folder_name = 'cv-valid-' + mode
-            out_dir = osp.join(self.tfrecord_dir, folder_name)
-            os.makedirs(out_dir, exist_ok=True)
-            dataframe = pd.read_csv(osp.join(self._audio_dir, folder_name + '.csv'))
-            sliced_dataframes = [dataframe[i:i+self._tfrecord_size] for i in range(0, len(dataframe), self._tfrecord_size)]
-            n = len(sliced_dataframes)
-            with alive_bar(n) as bar:
-                for i, df in enumerate(sliced_dataframes):
-                    out_file = osp.join(out_dir, f'spec_data_{i:03d}.tfrecord')
-                    with tf.io.TFRecordWriter(out_file) as writer:
-                        for row_idx, data in df.iterrows():
-                            spec_filepath = osp.join(self._spec_dir, data['filename'].replace('.mp3', '.png'))
-                            age = self._encode_age.get(data['age'])
-                            gender = self._encode_gender.get(data['gender'])
-                            gender_age = self._encode_gender_age.get(data['gender_age'])
-                            img = img_to_array(load_img(spec_filepath, target_size=self._spec_img_size))
-                            img_h = img.shape[0]
-                            img_w = img.shape[1]
-                            chan = img.shape[2]
-                            img_bytes = tf.io.serialize_tensor(img)
-                            fpath = bytes(spec_filepath, 'utf-8')
-                            example = self.serializeExample(fpath, img_bytes, img_h, img_w, chan, age, gender, gender_age)
-                            writer.write(example)
-                    bar()
+    # 定义数据转换
+    transform = transforms.Compose([
+        transforms.Resize((64, 64)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
     
-    def _decodeAge(self, serialized_example):
-        example = tf.io.parse_single_example(serialized_example, self._feature_description)
-        img = tf.io.parse_tensor(example['img'], out_type=tf.float32)
-        img_h = example['img_h']
-        img_w = example['img_w']
-        chan = example['chan']
-        img = tf.reshape(img, [img_h, img_w, chan])
-        img = img/255.0
-        label = example['lab_age']
-        return (img, label)
+    # 创建数据集
+    train_dataset = VoiceDataset(dataset_dir, 'train', cls_task, transform)
+    val_dataset = VoiceDataset(dataset_dir, 'dev', cls_task, transform)
+    test_dataset = VoiceDataset(dataset_dir, 'test', cls_task, transform)
     
-    def _decodeGender(self, serialized_example):
-        example = tf.io.parse_single_example(serialized_example, self._feature_description)
-        img = tf.io.parse_tensor(example['img'], out_type=tf.float32)
-        img_h = example['img_h']
-        img_w = example['img_w']
-        chan = example['chan']
-        img = tf.reshape(img, [img_h, img_w, chan])
-        img = img/255.0
-        label = example['lab_gender']
-        return (img, label)
+    # 创建数据加载器
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     
-    def _decodeGenderAge(self, serialized_example):
-        example = tf.io.parse_single_example(serialized_example, self._feature_description)
-        img = tf.io.parse_tensor(example['img'], out_type=tf.float32)
-        img_h = example['img_h']
-        img_w = example['img_w']
-        chan = example['chan']
-        img = tf.reshape(img, [img_h, img_w, chan])
-        img = img/255.0
-        label = example['lab_gender_age']
-        return (img, label)
-    
-    def _isTaskCorrect(self, label: str) -> bool:
-        correct_labels = ['age', 'gender', 'gender_age']
-        if label in correct_labels:
-            return True
-        else:
-            print("Given label argument should be one of ['age', 'gender', 'gender_age']")
-            return False
-    
-    def _setLabelDecoder(self, dataset: tf.data.TFRecordDataset, label: str) -> tf.data.TFRecordDataset:
-        if label=='age':
-            return dataset.map(self._decodeAge, num_parallel_calls=tf.data.AUTOTUNE)
-        elif label=='gender':
-            return dataset.map(self._decodeGender, num_parallel_calls=tf.data.AUTOTUNE)
-        elif label=='gender_age':
-            return dataset.map(self._decodeGenderAge, num_parallel_calls=tf.data.AUTOTUNE)
-    
-    def getTrainTFRecordDataset(self, cls_task, batch_size):
-        if self._isTaskCorrect(cls_task):
-            train_tfrecord_dir = osp.join(self.tfrecord_dir, 'cv-valid-train')
-            tfrecord_files = tf.data.Dataset.list_files(train_tfrecord_dir + "\\*.tfrecord")
-            tr_dataset = tf.data.TFRecordDataset(tfrecord_files, num_parallel_reads=tf.data.AUTOTUNE)
-            tr_dataset = tr_dataset.shuffle(10000)
-            tr_dataset = self._setLabelDecoder(tr_dataset, cls_task)
-            tr_dataset = tr_dataset.batch(batch_size)
-            tr_dataset = tr_dataset.prefetch(tf.data.AUTOTUNE)
-            return tr_dataset
-    
-    def getValidationTFRecordDataset(self, cls_task, batch_size):
-        if self._isTaskCorrect(cls_task):
-            valid_tfrecord_dir = osp.join(self.tfrecord_dir, 'cv-valid-dev')
-            tfrecord_files = tf.data.Dataset.list_files(valid_tfrecord_dir + "\\*.tfrecord")
-            valid_dataset = tf.data.TFRecordDataset(tfrecord_files, num_parallel_reads=tf.data.AUTOTUNE)
-            valid_dataset = valid_dataset.shuffle(2000)
-            valid_dataset = self._setLabelDecoder(valid_dataset, cls_task)
-            valid_dataset = valid_dataset.batch(batch_size)
-            valid_dataset = valid_dataset.prefetch(tf.data.AUTOTUNE)
-            return valid_dataset
-    
-    def getTestTFRecordDataset(self, cls_task, batch_size):
-        if self._isTaskCorrect(cls_task):
-            test_tfrecord_dir = osp.join(self.tfrecord_dir, 'cv-valid-test')
-            tfrecord_files = tf.data.Dataset.list_files(test_tfrecord_dir + "\\*.tfrecord")
-            test_dataset = tf.data.TFRecordDataset(tfrecord_files, num_parallel_reads=tf.data.AUTOTUNE)
-            test_dataset = test_dataset.shuffle(2000)
-            test_dataset = self._setLabelDecoder(test_dataset, cls_task)
-            test_dataset = test_dataset.batch(batch_size)
-            test_dataset = test_dataset.prefetch(tf.data.AUTOTUNE)
-            return test_dataset
+    return train_loader, val_loader, test_loader
