@@ -194,7 +194,11 @@ Model training
 python .\src\train.py --dataset_dir='data/CommonVoice' --cls_task='age' --num_epochs=20 --show_live_plot=True
 ```
 
-您可指定其他训练参数，例如 `--batch_size` 和 `--learning_rate`。`--batch_size` 默认值为 128，`--learning_rate` 默认值为 0.0001。另有 `--show_summary` 参数用于显示模型摘要。`--show_summary` 和 `--show_live_plot` 的默认值均为 False。训练完成后，训练日志文件将根据分类任务保存至 `results/` 文件夹，最佳模型将保存至 `models/` 文件夹。
+
+您可指定其他训练参数，例如 `--batch_size` 和 `--learning_rate`。其中，`--batch_size` 默认值为 128，`--learning_rate` 默认值为 0.0001。
+另有 `--show_summary` 参数用于显示模型摘要。`--show_summary` 和 `--show_live_plot` 的默认值均为 False。训
+练完成后，训练日志文件将根据分类任务保存至 `results/` 文件夹，最佳模型将保存至 `models/` 文件夹。
+
 Pretrained models 
 --------------------------------
 pretrained models can be downloaded from [here](https://1drv.ms/u/s!AtLl-Rpr0uJohKJ6_236uKDuJsLkhA?e=7zmPvM)
