@@ -127,43 +127,38 @@ python .\src\preprocess_dataset.py --dataset_dir='data/CommonVoice/' --dataset_t
 
 
 ```bash
-├───data/
-│   └───CommonVoice/
-│       ├───Audio/
-│       │   ├───cv-valid-dev/
-│       │   │   ├───sample-000004.mp3
-│       │   │   ├───sample-000005.mp3
-│       │   ├───cv-valid-test/
-│       │   │   ├───sample-000001.mp3
-│       │   │   ├───sample-000003.mp3
-│       │   ├───cv-valid-train/
-│       │   │   ├───sample-000005.mp3
-│       │   │   ├───sample-000013.mp3
-│       │   ├───LICENSE.txt
-│       │   ├───README.txt
-│       │   ├───cv-valid-dev.csv
-│       │   ├───cv-valid-test.csv
-│       │   └───cv-valid-train.csv
-│       ├───Spectrograms/
-│       │   ├───cv-valid-dev/
-│       │   │   ├───sample-000004.png
-│       │   │   ├───sample-000005.png
-│       │   ├───cv-valid-test/
-│       │   │   ├───sample-000001.png
-│       │   │   ├───sample-000003.png
-│       │   ├───cv-valid-train/
-│       │   │   ├───sample-000005.png
-│       │   │   ├───sample-000013.png
-│       ├───TFRecord/
-│       │   ├───cv-valid-dev/
-│       │   │   ├───spec_data_000.tfrecord
-│       │   │   ├───spec_data_001.tfrecord
-│       │   ├───cv-valid-test/
-│       │   │   ├───spec_data_000.tfrecord
-│       │   │   ├───spec_data_001.tfrecord
-│       │   └───cv-valid-train/
-│       │   │   ├───spec_data_000.tfrecord
-│       │   │   ├───spec_data_001.tfrecord
+data/
+└── CommonVoice/
+    ├── Audio/                      # 原始音频文件（保持不变）
+    │   ├── cv-valid-dev/
+    │   ├── cv-valid-test/
+    │   ├── cv-valid-train/
+    │   ├── LICENSE.txt
+    │   ├── README.txt
+    │   ├── cv-valid-dev.csv        # 可能经过清理（移除无效样本）
+    │   ├── cv-valid-test.csv       # 可能经过清理（移除无效样本）
+    │   └── cv-valid-train.csv      # 可能经过清理（移除无效样本）
+    │
+    ├── Spectrograms/               # 频谱图特征
+    │   ├── cv-valid-dev/           # 验证集频谱图
+    │   │   ├── sample-000001.png
+    │   │   └── ...
+    │   ├── cv-valid-test/          # 测试集频谱图
+    │   │   ├── sample-000002.png
+    │   │   └── ...
+    │   └── cv-valid-train/         # 训练集频谱图
+    │       ├── sample-000003.png
+    │       └── ...
+    │
+    ├── MelSpectrograms/            # 梅尔频谱图特征（如果选择此特征类型）
+    │   ├── cv-valid-dev/
+    │   ├── cv-valid-test/
+    │   └── cv-valid-train/
+    │
+    └── MFCCs/                      # MFCC特征（如果选择此特征类型）
+        ├── cv-valid-dev/
+        ├── cv-valid-test/
+        └── cv-valid-train/
 ```
 
 ## 数据集统计信息
